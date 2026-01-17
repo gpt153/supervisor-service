@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: supervisor_service
+      POSTGRES_USER: supervisor
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U supervisor"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  supervisor-service:
+    build: .
+    environment:
+      NODE_ENV: production
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      DATABASE_URL: postgresql://supervisor:${DATABASE_PASSWORD}@postgres:5432/supervisor_service
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: supervisor_service
+      DATABASE_USER: supervisor
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET}
+      TELEGRAM_ENABLED: ${TELEGRAM_ENABLED:-false}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      WEB_DASHBOARD_ENABLED: ${WEB_DASHBOARD_ENABLED:-true}
+      REST_API_ENABLED: ${REST_API_ENABLED:-true}
+      JWT_SECRET: ${JWT_SECRET}
+      API_KEYS: ${API_KEYS}
+      PORT: 8080
+      SUPERVISOR_ROOT: /app/supervisor
+      ARCHON_WORKSPACES: /app/workspaces
+    ports:
+      - "8080:8080"
+    volumes:
+      - supervisor-data:/app/supervisor
+      - workspaces-data:/app/workspaces
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  supervisor-data:
+  workspaces-data:

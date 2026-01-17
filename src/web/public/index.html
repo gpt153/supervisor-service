@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supervisor Service Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>Supervisor Service Dashboard</h1>
+        <div class="subtitle">Multi-project supervisor with Claude Code integration</div>
+    </header>
+    
+    <div class="container">
+        <div class="stats" id="stats">
+            <div class="stat-card">
+                <div class="stat-label">Total Projects</div>
+                <div class="stat-value" id="total-projects">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Active Sessions</div>
+                <div class="stat-value" id="active-sessions">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Total Issues</div>
+                <div class="stat-value" id="total-issues">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Verifications Today</div>
+                <div class="stat-value" id="verifications-today">0</div>
+            </div>
+        </div>
+        
+        <div id="error-container"></div>
+        
+        <div class="projects-grid" id="projects-grid">
+            <div class="loading">Loading projects...</div>
+        </div>
+        
+        <div class="activity-log">
+            <div class="activity-header">Recent Activity</div>
+            <div class="activity-list" id="activity-list">
+                <div class="loading">Loading activity...</div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>

@@ -1,13 +1,10 @@
 import dotenv from 'dotenv';
 
-// Load environment variables
 dotenv.config();
 
 export interface Config {
-  // Claude API
   anthropicApiKey: string;
   
-  // Database
   database: {
     host: string;
     port: number;
@@ -17,24 +14,35 @@ export interface Config {
     url: string;
   };
   
-  // GitHub
   github: {
     token: string;
     webhookSecret: string;
   };
   
-  // Service
+  telegram?: {
+    enabled: boolean;
+    botToken?: string;
+  };
+  
+  web?: {
+    dashboardEnabled: boolean;
+  };
+  
+  api?: {
+    enabled: boolean;
+    jwtSecret?: string;
+    apiKeys?: string[];
+  };
+  
   port: number;
   nodeEnv: string;
   logLevel: string;
   
-  // Paths
   paths: {
     supervisorRoot: string;
     archonWorkspaces: string;
   };
   
-  // MCP
   mcp: {
     githubEnabled: boolean;
     archonEnabled: boolean;
@@ -68,6 +76,21 @@ export const config: Config = {
   github: {
     token: getEnvVar('GITHUB_TOKEN'),
     webhookSecret: getEnvVarOptional('GITHUB_WEBHOOK_SECRET', ''),
+  },
+  
+  telegram: {
+    enabled: getEnvVarOptional('TELEGRAM_ENABLED', 'false') === 'true',
+    botToken: process.env.TELEGRAM_BOT_TOKEN,
+  },
+  
+  web: {
+    dashboardEnabled: getEnvVarOptional('WEB_DASHBOARD_ENABLED', 'true') === 'true',
+  },
+  
+  api: {
+    enabled: getEnvVarOptional('REST_API_ENABLED', 'true') === 'true',
+    jwtSecret: process.env.JWT_SECRET,
+    apiKeys: process.env.API_KEYS ? process.env.API_KEYS.split(',') : [],
   },
   
   port: parseInt(getEnvVarOptional('PORT', '8080'), 10),

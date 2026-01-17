@@ -423,3 +423,214 @@ Webhook events are processed asynchronously:
 
 This ensures webhooks never timeout and verification can run for several minutes.
 
+
+## Phase 4: Optional Adapters
+
+The supervisor-service now includes multiple interface adapters for different use cases:
+
+### Telegram Bot Adapter
+
+Interact with your projects via Telegram bot.
+
+**Features:**
+- Project selection and switching
+- Send commands to projects
+- Trigger verifications
+- Receive real-time updates
+- Markdown-formatted responses
+
+**Setup:**
+1. Create bot via @BotFather
+2. Set `TELEGRAM_ENABLED=true`
+3. Set `TELEGRAM_BOT_TOKEN=your_token`
+4. Start service and send `/start` to bot
+
+**Commands:**
+- `/start` - Welcome message
+- `/help` - Show available commands
+- `/status` - Show all projects
+- `/current` - Show current project
+- `/switch <project>` - Switch to project
+- `/verify` - Verify current project
+- Any text - Send command to current project
+
+### Web Dashboard
+
+Simple, clean web interface for monitoring and control.
+
+**Features:**
+- Overview of all projects
+- Real-time status updates via SSE
+- Manual verification triggers
+- Activity log
+- Project statistics
+
+**Access:**
+- URL: `http://localhost:8080/`
+- No authentication required (add reverse proxy with auth for production)
+
+**Configuration:**
+```bash
+WEB_DASHBOARD_ENABLED=true  # Default: true
+```
+
+### REST API
+
+Full-featured REST API for custom integrations.
+
+**Features:**
+- List projects
+- Get project status
+- Send commands to projects
+- List issues
+- Trigger verifications
+- Get verification results
+- JWT and API key authentication
+- Rate limiting
+- OpenAPI documentation
+
+**Authentication:**
+
+JWT Token:
+```bash
+curl -H "Authorization: Bearer <jwt_token>" \
+  http://localhost:8080/api/v1/projects
+```
+
+API Key:
+```bash
+curl -H "Authorization: ApiKey <api_key>" \
+  http://localhost:8080/api/v1/projects
+```
+
+**Configuration:**
+```bash
+REST_API_ENABLED=true
+JWT_SECRET=your_jwt_secret_here
+API_KEYS=key1,key2,key3
+```
+
+**Endpoints:**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/health` | Health check (no auth) |
+| GET | `/api/v1/projects` | List all projects |
+| GET | `/api/v1/projects/:name/status` | Get project status |
+| POST | `/api/v1/projects/:name/command` | Send command |
+| GET | `/api/v1/projects/:name/issues` | List issues |
+| POST | `/api/v1/projects/:name/verify/:issueNumber` | Verify issue |
+| GET | `/api/v1/verification/:id` | Get verification result |
+
+**Example Usage:**
+
+```bash
+# List projects
+curl -H "Authorization: ApiKey your_key" \
+  http://localhost:8080/api/v1/projects
+
+# Get project status
+curl -H "Authorization: ApiKey your_key" \
+  http://localhost:8080/api/v1/projects/consilio/status
+
+# Send command
+curl -X POST \
+  -H "Authorization: ApiKey your_key" \
+  -H "Content-Type: application/json" \
+  -d '{"command":"Show me the latest issues"}' \
+  http://localhost:8080/api/v1/projects/consilio/command
+
+# Trigger verification
+curl -X POST \
+  -H "Authorization: ApiKey your_key" \
+  http://localhost:8080/api/v1/projects/consilio/verify/123
+```
+
+## Deployment
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions covering:
+
+- Docker deployment (development and production)
+- Systemd deployment (bare metal/VPS)
+- Configuration management
+- Security hardening
+- Monitoring and logging
+- Backup and recovery
+- Performance tuning
+- Troubleshooting
+
+Quick start with Docker:
+
+```bash
+# Copy and configure environment
+cp .env.example .env
+# Edit .env with your settings
+
+# Start all services
+docker-compose up -d
+
+# Check logs
+docker-compose logs -f
+
+# Check health
+curl http://localhost:8080/health
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Supervisor Service                       │
+├─────────────────────────────────────────────────────────────┤
+│                                                               │
+│  ┌────────────┐  ┌─────────────┐  ┌──────────┐             │
+│  │  Telegram  │  │     Web     │  │   REST   │             │
+│  │   Adapter  │  │  Dashboard  │  │    API   │             │
+│  └─────┬──────┘  └──────┬──────┘  └────┬─────┘             │
+│        │                 │              │                    │
+│        └─────────────────┴──────────────┘                    │
+│                          │                                   │
+│                    ┌─────▼─────┐                            │
+│                    │           │                            │
+│                    │Orchestrator│                            │
+│                    │           │                            │
+│                    └─────┬─────┘                            │
+│                          │                                   │
+│         ┌────────────────┼────────────────┐                 │
+│         │                │                │                 │
+│   ┌─────▼─────┐   ┌─────▼─────┐   ┌─────▼─────┐          │
+│   │ Project   │   │ Project   │   │ Project   │          │
+│   │ Manager 1 │   │ Manager 2 │   │ Manager 3 │          │
+│   └─────┬─────┘   └─────┬─────┘   └─────┬─────┘          │
+│         │               │               │                  │
+│         └───────────────┴───────────────┘                  │
+│                         │                                   │
+│                   ┌─────▼──────┐                           │
+│                   │            │                           │
+│                   │Claude Agent│                           │
+│                   │    SDK     │                           │
+│                   │            │                           │
+│                   └────────────┘                           │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Testing
+
+```bash
+# Run tests (when implemented)
+npm test
+
+# Build
+npm run build
+
+# Start development
+npm run dev
+
+# MCP server
+npm run mcp
+```
+
+## License
+
+ISC
