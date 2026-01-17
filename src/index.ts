@@ -2,6 +2,10 @@ import express, { Request, Response, NextFunction } from 'express';
 import { config } from './config';
 import { SessionStore } from './storage/SessionStore';
 import { Orchestrator } from './orchestrator/Orchestrator';
+import { WebhookHandler } from './webhooks/handler';
+import { WebhookProcessor } from './webhooks/processor';
+import { webhookValidationMiddleware } from './webhooks/middleware';
+import { Pool } from 'pg';
 
 /**
  * Supervisor Service - Entry Point
@@ -10,11 +14,15 @@ import { Orchestrator } from './orchestrator/Orchestrator';
  * - Initialize database and session store
  * - Create orchestrator for project management
  * - Start HTTP server for health checks and webhooks
+ * - Process GitHub webhooks
  * - Handle graceful shutdown
  */
 
 let sessionStore: SessionStore | null = null;
 let orchestrator: Orchestrator | null = null;
+let webhookHandler: WebhookHandler | null = null;
+let webhookProcessor: WebhookProcessor | null = null;
+let dbPool: Pool | null = null;
 let server: any = null;
 
 async function startServer(): Promise<void> {
@@ -27,12 +35,29 @@ async function startServer(): Promise<void> {
     await sessionStore.initialize();
     console.log('Database connected successfully');
     
+    // Create database pool for webhooks
+    dbPool = new Pool({
+      connectionString: config.database.url,
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 2000,
+    });
+    
     // Initialize orchestrator
     console.log('Initializing orchestrator...');
     orchestrator = new Orchestrator({ sessionStore });
     await orchestrator.initialize();
     const activeCount = orchestrator.getActiveProjects().length;
     console.log('Orchestrator initialized with ' + activeCount + ' projects');
+    
+    // Initialize webhook components
+    console.log('Initializing webhook processor...');
+    webhookHandler = new WebhookHandler(dbPool);
+    webhookProcessor = new WebhookProcessor(dbPool, orchestrator);
+    
+    // Start webhook event processing queue
+    webhookProcessor.startProcessingQueue(30000); // Check every 30 seconds
+    console.log('Webhook processor started');
     
     // Create Express app
     const app = express();
@@ -91,8 +116,45 @@ async function startServer(): Promise<void> {
         status: 'running',
         endpoints: {
           health: '/health',
+          webhooks: '/webhooks/github',
         },
       });
+    });
+    
+    // GitHub webhook endpoint
+    app.post('/webhooks/github', webhookValidationMiddleware, async (req: Request, res: Response) => {
+      try {
+        const eventType = (req as any).githubEvent;
+        const deliveryId = (req as any).githubDeliveryId;
+        
+        console.log(`Received GitHub webhook: ${eventType} (${deliveryId})`);
+        
+        // Quickly acknowledge receipt
+        res.status(202).json({
+          message: 'Webhook received',
+          deliveryId,
+          eventType,
+        });
+        
+        // Process event asynchronously
+        if (!webhookHandler) {
+          console.error('Webhook handler not initialized');
+          return;
+        }
+        
+        const result = await webhookHandler.processEvent(eventType, req.body);
+        
+        console.log(`Webhook stored: ${result.eventId}, trigger verification: ${result.shouldTriggerVerification}`);
+        
+        // If this should trigger verification, it will be picked up by the background processor
+        if (result.shouldTriggerVerification) {
+          console.log(`Verification will be triggered for ${result.projectName} #${result.issueNumber}`);
+        }
+        
+      } catch (error) {
+        console.error('Error processing webhook:', error);
+        // Don't send error response - we already sent 202
+      }
     });
     
     // Error handling middleware
@@ -116,6 +178,7 @@ async function startServer(): Promise<void> {
     server = app.listen(config.port, () => {
       console.log('Supervisor Service listening on port ' + config.port);
       console.log('Health check: http://localhost:' + config.port + '/health');
+      console.log('Webhook endpoint: http://localhost:' + config.port + '/webhooks/github');
       console.log('Service started successfully');
     });
     
@@ -130,6 +193,12 @@ async function shutdown(): Promise<void> {
   console.log('Shutting down gracefully...');
   
   try {
+    // Stop webhook processor
+    if (webhookProcessor) {
+      webhookProcessor.stopProcessingQueue();
+      console.log('Webhook processor stopped');
+    }
+    
     // Close HTTP server
     if (server) {
       await new Promise<void>((resolve) => {
@@ -146,10 +215,15 @@ async function shutdown(): Promise<void> {
       console.log('Orchestrator shut down');
     }
     
-    // Close database connection
+    // Close database connections
     if (sessionStore) {
       await sessionStore.close();
-      console.log('Database connection closed');
+      console.log('Session store closed');
+    }
+    
+    if (dbPool) {
+      await dbPool.end();
+      console.log('Database pool closed');
     }
     
     console.log('Shutdown complete');

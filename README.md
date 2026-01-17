@@ -325,3 +325,101 @@ ISC
 ## Contributing
 
 This is a personal project for managing multiple supervisor instances.
+
+## Phase 2: GitHub Webhooks
+
+### Webhook Setup
+
+1. **Configure webhook secret:**
+```bash
+# Generate a secure secret
+openssl rand -hex 32
+
+# Add to .env
+GITHUB_WEBHOOK_SECRET=your_generated_secret
+```
+
+2. **Set up GitHub webhook:**
+
+Go to your repository settings → Webhooks → Add webhook
+
+- **Payload URL:** `https://your-domain.com/webhooks/github`
+- **Content type:** `application/json`
+- **Secret:** (use the same secret from step 1)
+- **Events:** Select:
+  - Issue comments
+  - Issues
+  - Pull requests
+
+3. **Test webhook:**
+```bash
+# Create a test event
+curl -X POST http://localhost:8080/webhooks/github \
+  -H "Content-Type: application/json" \
+  -H "X-GitHub-Event: ping" \
+  -H "X-GitHub-Delivery: test-123" \
+  -H "X-Hub-Signature-256: sha256=<calculated-signature>" \
+  -d '{"zen":"testing"}'
+```
+
+### Automated Verification
+
+When SCAR posts a completion comment, the service automatically:
+
+1. **Detects completion** - Monitors for keywords like "Implementation complete"
+2. **Runs verification:**
+   - Build validation (`npm run build`)
+   - Test suite (`npm test`)
+   - Mock/placeholder detection
+3. **Posts results** - Comments back on the GitHub issue with verification report
+4. **Adds labels** - Tags issue with verification status
+
+### Verification Protocol
+
+The verification runner checks:
+
+- **Build Success** - Code compiles without errors
+- **Tests Pass** - All tests execute successfully
+- **No Mocks** - No placeholder code (TODO, MOCK, STUB, etc.)
+
+Results are stored in `verification_results` table and posted as GitHub comments.
+
+### Database Tables
+
+**webhook_events** - Queue of incoming webhook events
+```sql
+- id: UUID
+- event_type: GitHub event (issue_comment, issues, etc.)
+- project_name: Identified project
+- issue_number: Issue/PR number
+- payload: Full webhook payload (JSONB)
+- processed: Whether event has been handled
+- created_at: Timestamp
+```
+
+**verification_results** - Historical verification data
+```sql
+- id: UUID
+- project_name: Project identifier
+- issue_number: Issue/PR number
+- status: passed|failed|partial|error
+- build_success: Boolean
+- tests_passed: Boolean
+- mocks_detected: Boolean
+- details: Full results (JSONB)
+- created_at: Timestamp
+```
+
+### Event Processing
+
+Webhook events are processed asynchronously:
+
+1. **Receive webhook** → Return 202 immediately
+2. **Store in database** → webhook_events table
+3. **Background processor** → Checks queue every 30 seconds
+4. **Run verification** → If SCAR completion detected
+5. **Post results** → GitHub comment with report
+6. **Mark processed** → Update webhook_events
+
+This ensures webhooks never timeout and verification can run for several minutes.
+
