@@ -3,10 +3,15 @@
   "version": "1.0.0",
   "description": "Multi-project supervisor service with Claude Code integration",
   "main": "dist/index.js",
+  "bin": {
+    "supervisor-mcp": "dist/mcp-server.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
+    "mcp": "node dist/mcp-server.js",
     "dev": "ts-node src/index.ts",
+    "dev:mcp": "ts-node src/mcp-server.ts",
     "test": "echo \"Tests will be added in Phase 2+\" && exit 0",
     "db:migrate": "bash scripts/migrate.sh",
     "lint": "echo \"Linting not configured yet\"",
