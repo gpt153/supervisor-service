@@ -8,6 +8,10 @@ import {
 import { SecretsManager } from '../secrets/SecretsManager.js';
 import { PortManager } from '../ports/PortManager.js';
 import { TaskTimer } from '../timing/TaskTimer.js';
+import { AutoSecretDetector } from '../secrets/AutoSecretDetector.js';
+import { PIVOrchestrator } from '../agents/piv/index.js';
+import { InstructionAssembler } from '../instructions/InstructionAssembler.js';
+import { AdaptLocalClaude } from '../instructions/AdaptLocalClaude.js';
 // CloudflareManager and GCloudManager reserved for future use
 // import { CloudflareManager } from '../cloudflare/CloudflareManager.js';
 // import { GCloudManager } from '../gcloud/GCloudManager.js';
@@ -26,6 +30,9 @@ console.error(`MCP Server initialized for project: ${projectName}`);
 const secretsManager = new SecretsManager(encryptionKey);
 const portManager = new PortManager();
 const taskTimer = new TaskTimer();
+const secretDetector = new AutoSecretDetector();
+const instructionAssembler = new InstructionAssembler();
+// PIV orchestrator needs workspace path - will be set per call
 // CloudflareManager and GCloudManager reserved for future use
 // const cloudflareManager = new CloudflareManager();
 // const gcloudManager = new GCloudManager();
@@ -92,6 +99,32 @@ const tools: Tool[] = [
           description: 'Optional: filter by secret type',
         },
       },
+    },
+  },
+  {
+    name: 'mcp__meta__detect_secrets',
+    description: 'Automatically detect secrets in user messages and store them',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        message: {
+          type: 'string',
+          description: 'User message that may contain API keys or secrets',
+        },
+        question: {
+          type: 'string',
+          description: 'Optional: The question that was asked (helps with context-based detection)',
+        },
+        projectName: {
+          type: 'string',
+          description: 'Optional: Project name for scoped secret storage',
+        },
+        autoStore: {
+          type: 'boolean',
+          description: 'If true, automatically store detected secrets (default: true)',
+        },
+      },
+      required: ['message'],
     },
   },
 
@@ -243,6 +276,104 @@ const tools: Tool[] = [
       },
     },
   },
+
+  // ==================== PIV LOOP ====================
+  {
+    name: 'mcp__meta__start_piv_loop',
+    description: 'Start the PIV (Plan → Implement → Validate) loop for an epic',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectName: {
+          type: 'string',
+          description: 'Project name (e.g., consilio, openhorizon)',
+        },
+        projectPath: {
+          type: 'string',
+          description: 'Absolute path to project workspace',
+        },
+        epicId: {
+          type: 'string',
+          description: 'Epic ID (e.g., epic-010)',
+        },
+        epicTitle: {
+          type: 'string',
+          description: 'Epic title',
+        },
+        epicDescription: {
+          type: 'string',
+          description: 'Epic description',
+        },
+        acceptanceCriteria: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Acceptance criteria for the epic',
+        },
+        tasks: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'List of tasks to implement',
+        },
+        skipPrime: {
+          type: 'boolean',
+          description: 'Skip Prime phase if context already exists (default: false)',
+        },
+      },
+      required: ['projectName', 'projectPath', 'epicId', 'epicTitle', 'tasks'],
+    },
+  },
+  {
+    name: 'mcp__meta__piv_status',
+    description: 'Get status of PIV loop execution',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        epicId: {
+          type: 'string',
+          description: 'Epic ID to check status for',
+        },
+      },
+      required: ['epicId'],
+    },
+  },
+
+  // ==================== INSTRUCTION MANAGEMENT ====================
+  {
+    name: 'mcp__meta__propagate_instructions',
+    description: 'Update all supervisor instructions (meta + all projects) by regenerating CLAUDE.md files from core instruction layers',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projects: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'List of project names to update (empty = all projects)',
+        },
+        updateMeta: {
+          type: 'boolean',
+          description: 'Whether to update meta-supervisor (default: true)',
+        },
+      },
+    },
+  },
+  {
+    name: 'mcp__meta__adapt_project',
+    description: 'Analyze project codebase and optimize supervisor instructions for that project',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectName: {
+          type: 'string',
+          description: 'Project name to optimize',
+        },
+        projectPath: {
+          type: 'string',
+          description: 'Absolute path to project directory',
+        },
+      },
+      required: ['projectName', 'projectPath'],
+    },
+  },
 ];
 
 // Create MCP server
@@ -376,6 +507,84 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                   createdAt: s.createdAt,
                   updatedAt: s.updatedAt,
                 })),
+              }, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'mcp__meta__detect_secrets': {
+        const message = args.message as string;
+        const question = args.question as string | undefined;
+        const contextProjectName = args.projectName as string | undefined || projectName;
+        const autoStore = args.autoStore !== false; // Default to true
+
+        // Detect secret in message
+        const detection = await secretDetector.detectSecret(message, {
+          question,
+          projectName: contextProjectName,
+        });
+
+        if (!detection) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  detected: false,
+                  message: 'No secret detected in message',
+                }, null, 2),
+              },
+            ],
+          };
+        }
+
+        // If autoStore is enabled, store the detected secret
+        if (autoStore) {
+          await secretsManager.store(
+            detection.keyPath,
+            detection.value,
+            {
+              description: detection.description,
+              secretType: detection.secretType,
+              provider: detection.provider,
+            }
+          );
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  detected: true,
+                  stored: true,
+                  provider: detection.provider,
+                  keyPath: detection.keyPath,
+                  description: detection.description,
+                  secretType: detection.secretType,
+                  message: `Detected and stored ${detection.description}`,
+                }, null, 2),
+              },
+            ],
+          };
+        }
+
+        // If autoStore is false, just return detection info (don't show the actual value)
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                detected: true,
+                stored: false,
+                provider: detection.provider,
+                keyPath: detection.keyPath,
+                description: detection.description,
+                secretType: detection.secretType,
+                message: `Detected ${detection.description} (not stored)`,
               }, null, 2),
             },
           ],
@@ -537,6 +746,147 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 success: true,
                 projectScope: projectName,
                 stats,
+              }, null, 2),
+            },
+          ],
+        };
+      }
+
+      // ==================== PIV LOOP ====================
+      case 'mcp__meta__start_piv_loop': {
+        const epic = {
+          id: args.epicId as string,
+          title: args.epicTitle as string,
+          description: args.epicDescription as string || '',
+          acceptanceCriteria: (args.acceptanceCriteria as string[]) || [],
+          tasks: args.tasks as string[],
+        };
+
+        const project = {
+          name: args.projectName as string,
+          path: args.projectPath as string,
+        };
+
+        const options = {
+          skipPrime: args.skipPrime as boolean | undefined,
+        };
+
+        // Create PIV orchestrator for this project
+        const pivOrchestrator = new PIVOrchestrator(project.path);
+
+        // Run PIV loop (this is async and may take a while)
+        const state = await pivOrchestrator.run(project, epic, options);
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: state.currentPhase === 'complete',
+                epicId: state.epicId,
+                currentPhase: state.currentPhase,
+                startedAt: state.startedAt,
+                completedAt: state.completedAt,
+                primeResult: state.primeResult ? {
+                  contextPath: state.primeResult.contextPath,
+                  techStack: state.primeResult.techStack,
+                  readyForPlan: state.primeResult.readyForPlan,
+                } : undefined,
+                planResult: state.planResult ? {
+                  planPath: state.planResult.planPath,
+                  phases: state.planResult.phases.length,
+                  estimatedDuration: state.planResult.estimatedDuration,
+                  readyForExecute: state.planResult.readyForExecute,
+                } : undefined,
+                executeResult: state.executeResult ? {
+                  success: state.executeResult.success,
+                  branchName: state.executeResult.branchName,
+                  prNumber: state.executeResult.prNumber,
+                  prUrl: state.executeResult.prUrl,
+                  filesChanged: state.executeResult.filesChanged.length,
+                  validationResults: state.executeResult.validationResults.length,
+                  errorMessage: state.executeResult.errorMessage,
+                } : undefined,
+                error: state.error,
+              }, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'mcp__meta__piv_status': {
+        // This is a stub - in production, would query state from database
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                message: 'PIV status tracking not yet implemented',
+                epicId: args.epicId,
+              }, null, 2),
+            },
+          ],
+        };
+      }
+
+      // ==================== INSTRUCTION MANAGEMENT ====================
+      case 'mcp__meta__propagate_instructions': {
+        const projects = (args.projects as string[] | undefined) || await instructionAssembler.getProjects();
+        // updateMeta reserved for future use when meta-specific instructions exist
+        // const updateMeta = args.updateMeta !== false; // Default to true
+
+        const results = await instructionAssembler.regenerateAll(projects);
+
+        const successful = results.filter(r => r.success);
+        const failed = results.filter(r => !r.success);
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: failed.length === 0,
+                updated: successful.length,
+                failed: failed.length,
+                results: results.map(r => ({
+                  name: r.name,
+                  success: r.success,
+                  path: r.path,
+                  error: r.error,
+                })),
+                message: failed.length === 0
+                  ? `Successfully updated ${successful.length} supervisor(s)`
+                  : `Updated ${successful.length} supervisor(s), ${failed.length} failed`,
+              }, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'mcp__meta__adapt_project': {
+        const projectName = args.projectName as string;
+        const projectPath = args.projectPath as string;
+
+        const adapter = new AdaptLocalClaude(projectPath, projectName);
+        const analysis = await adapter.analyze();
+
+        // Apply optimizations (update project-specific instructions and regenerate CLAUDE.md)
+        await adapter.optimize();
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                projectName,
+                analysis: {
+                  techStack: analysis.techStack,
+                  recommendationsCount: analysis.recommendations.length,
+                  recommendations: analysis.recommendations,
+                },
+                message: `Optimized instructions for ${projectName}. CLAUDE.md regenerated.`,
               }, null, 2),
             },
           ],
