@@ -3,8 +3,9 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 export interface Config {
-  anthropicApiKey: string;
-  
+  anthropicApiKey?: string;
+  claudeCodeOAuthToken?: string;
+
   database: {
     host: string;
     port: number;
@@ -62,14 +63,15 @@ function getEnvVarOptional(key: string, defaultValue: string): string {
 }
 
 export const config: Config = {
-  anthropicApiKey: getEnvVar('ANTHROPIC_API_KEY'),
-  
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+  claudeCodeOAuthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,
+
   database: {
     host: getEnvVarOptional('DATABASE_HOST', 'localhost'),
     port: parseInt(getEnvVarOptional('DATABASE_PORT', '5432'), 10),
     name: getEnvVarOptional('DATABASE_NAME', 'supervisor_service'),
     user: getEnvVarOptional('DATABASE_USER', 'supervisor'),
-    password: getEnvVar('DATABASE_PASSWORD'),
+    password: getEnvVarOptional('DATABASE_PASSWORD', ''),
     url: getEnvVar('DATABASE_URL'),
   },
   
